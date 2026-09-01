@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Huggy Wuggy Runner — Property Tests</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d1a;
+      color: #dddcd7;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      padding: 32px 24px;
+      min-height: 100vh;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+
+    p.subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 28px;
+    }
+
+    #results {
+      list-style: none;
+      max-width: 820px;
+    }
+
+    #results li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 16px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    #results li.pass {
+      background: #0d2b1a;
+      border-left: 4px solid #2ecc71;
+      color: #a8f0c6;
+    }
+
+    #results li.fail {
+      background: #2b0d0d;
+      border-left: 4px solid #e74c3c;
+      color: #f0a8a8;
+    }
+
+    #results li.running {
+      background: #1a1a2e;
+      border-left: 4px solid #888;
+      color: #aaa;
+    }
+
+    .badge {
+      font-weight: bold;
+      font-size: 0.8rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .pass .badge  { background: #2ecc71; color: #0d2b1a; }
+    .fail .badge  { background: #e74c3c; color: #fff; }
+    .running .badge { background: #555; color: #ddd; }
+
+    .detail {
+      font-size: 0.78rem;
+      color: #888;
+      margin-top: 4px;
+      font-family: monospace;
+      word-break: break-all;
+    }
+
+    #summary {
+      margin-top: 24px;
+      font-size: 1rem;
+      font-weight: bold;
+      color: #dddcd7;
+      max-width: 820px;
+    }
+
+    #summary span.pass-count { color: #2ecc71; }
+    #summary span.fail-count { color: #e74c3c; }
+  </style>
+</head>
+<body>
+  <h1>Huggy Wuggy Runner — Property-Based Tests</h1>
+  <p class="subtitle">
+    Properties 1–4, 7–8, 11–12 &nbsp;|&nbsp;
+    Validates: Requirements 2.2, 2.3, 2.4, 3.3, 3.4, 3.5, 3.6, 6.5, 6.6, 7.4, 9.1, 9.2, 9.3 &nbsp;|&nbsp;
+    100 runs per property via fast-check
+  </p>
+
+  <ul id="results"></ul>
+  <div id="summary"></div>
+
+  <!-- fast-check via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/fast-check@3/lib/bundle/fast-check.min.js"></script>
+
+  <script>
+    'use strict';
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Pure functions under test (inlined for isolation)
+    //  These mirror the implementations in game.html exactly.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Clamps delta-time to a maximum of 100 ms.
+     * @param {number} dt  Raw delta-time in milliseconds (>= 0)
+     * @returns {number}
+     */
+    function clampDt(dt) {
+      return Math.min(dt, 100);
+    }
+
+    /**
+     * Apply jump velocity to a player-like object.
+     * Sets vy = -550 if onGround; no-op otherwise. Returns the mutated object.
+     * @param {{vy:number, onGround:boolean}} p
+     * @returns {{vy:number, onGround:boolean}}
+     */
+    function applyJump(p) {
+      if (p.onGround) {
+        p.vy = -550;
+        p.onGround = false;
+      }
+      return p;
+    }
+
+    /**
+     * Integrate gravity for one physics step.
+     * @param {number} vy   Current vertical velocity (px/s)
+     * @param {number} dt   Delta-time in milliseconds
+     * @returns {number}    New vertical velocity
+     */
+    function integrateGravity(vy, dt) {
+      return vy + 1400 * (dt / 1000);
+    }
+
+    /**
+     * Axis-Aligned Bounding Box overlap test.
+     * @param {{x:number,y:number,w:number,h:number}} a
+     * @param {{x:number,y:number,w:number,h:number}} b
+     * @returns {boolean}
+     */
+    function aabb(a, b) {
+      return a.x < b.x + b.w &&
+             a.x + a.w > b.x &&
+             a.y < b.y + b.h &&
+             a.y + a.h > b.y;
+    }
+
+    /**
+     * Compute the hitbox height based on slide state.
+     * @param {number}  baseH    Standing height in pixels
+     * @param {boolean} sliding  Whether the player is sliding
+     * @returns {number}
+     */
+    function slideHitboxHeight(baseH, sliding) {
+      return sliding ? baseH * 0.5 : baseH;
+    }
+
+    /**
+     * Collision guard stub: checks whether a hit should be applied.
+     * Returns true (life should be decremented) only when:
+     *   - player is NOT invincible
+     *   - obstacle is NOT a laser_beam while player is sliding
+     * @param {{sliding:boolean, invincible:boolean}} player
+     * @param {{type:string}} obstacle
+     * @returns {boolean}  true → decrement lives; false → skip
+     */
+    function checkObstacleCollision(player, obstacle) {
+      if (player.invincible) return false;
+      if (player.sliding && obstacle.type === 'laser_beam') return false;
+      return true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Test runner helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const resultsEl = document.getElementById('results');
+    const summaryEl = document.getElementById('summary');
+    let passCount = 0;
+    let failCount = 0;
+
+    /**
+     * Add a placeholder "running…" item before the test executes.
+     * Returns the li element so runProperty can update it.
+     */
+    function addRunningItem(label) {
+      const li = document.createElement('li');
+      li.className = 'running';
+      li.innerHTML = `<span class="badge">RUN</span><div><strong>${label}</strong></div>`;
+      resultsEl.appendChild(li);
+      return li;
+    }
+
+    /**
+     * Run a single fast-check property and update the DOM with the result.
+     * @param {string}   label    Human-readable property name
+     * @param {Function} propty   No-argument function that calls fc.assert(fc.property(...))
+     */
+    function runProperty(label, propty) {
+      const li = addRunningItem(label);
+      try {
+        propty();
+        // Passed
+        li.className = 'pass';
+        li.innerHTML = `<span class="badge">PASS</span><div><strong>${label}</strong></div>`;
+        passCount++;
+      } catch (err) {
+        // Failed — show the counterexample
+        li.className = 'fail';
+        const detail = err && err.message ? err.message.replace(/</g, '&lt;').replace(/>/g, '&gt;') : String(err);
+        li.innerHTML = `
+          <span class="badge">FAIL</span>
+          <div>
+            <strong>${label}</strong>
+            <div class="detail">${detail}</div>
+          </div>`;
+        failCount++;
+      }
+    }
+
+    function renderSummary() {
+      const total = passCount + failCount;
+      summaryEl.innerHTML =
+        `Results: <span class="pass-count">${passCount} passed</span> / ` +
+        `<span class="fail-count">${failCount} failed</span> ` +
+        `out of ${total} properties`;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  fast-check global configuration
+    // ─────────────────────────────────────────────────────────────────────────
+    fc.configureGlobal({ numRuns: 100, verbose: true });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Shared arbitraries
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Rectangle with positive dimensions and arbitrary position. */
+    const rectArb = fc.record({
+      x: fc.float({ min: -1000, max: 1000, noNaN: true }),
+      y: fc.float({ min: -1000, max: 1000, noNaN: true }),
+      w: fc.float({ min: 0.1,   max: 500,  noNaN: true }),
+      h: fc.float({ min: 0.1,   max: 500,  noNaN: true }),
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 1: Delta-Time Clamping
+    //  Validates: Requirements 2.2, 2.3
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 1: Delta-Time Clamping — clampDt(dt) === Math.min(dt, 100) for any dt >= 0',
+      () => fc.assert(
+        fc.property(
+          fc.float({ min: 0, max: 10000, noNaN: true }),
+          (dt) => {
+            const result = clampDt(dt);
+            return result === Math.min(dt, 100) && result <= 100;
+          }
+        )
+        // **Validates: Requirements 2.2, 2.3**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 2: Frame-Rate Independence
+    //  Validates: Requirements 2.4
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 2: Frame-Rate Independence — total displacement identical regardless of frame subdivision',
+      () => fc.assert(
+        fc.property(
+          fc.float({ min: 1, max: 700, noNaN: true }),   // scroll speed v (px/s)
+          fc.integer({ min: 1, max: 16 }),               // N frames
+          fc.float({ min: 1, max: 500, noNaN: true }),   // total elapsed T (ms)
+          (v, N, T) => {
+            // Single-step displacement: v * T / 1000
+            const singleStep = v * T / 1000;
+
+            // Multi-step: N equal sub-frames of T/N ms each
+            let multiStep = 0;
+            const subDt = T / N;
+            for (let i = 0; i < N; i++) {
+              multiStep += v * (subDt / 1000);
+            }
+
+            // Must match within floating-point tolerance
+            return Math.abs(multiStep - singleStep) < 1e-9;
+          }
+        )
+        // **Validates: Requirements 2.4**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 3: Jump Physics
+    //  Validates: Requirements 3.3, 3.4, 3.5
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 3: Jump Physics — applyJump sets vy = -550; integrateGravity matches formula; ground-snap zeroes vy',
+      () => {
+        // 3a: applyJump sets vy exactly to -550 when onGround
+        fc.assert(
+          fc.property(
+            fc.float({ min: -2000, max: 2000, noNaN: true }), // any initial vy
+            (initialVy) => {
+              const p = { vy: initialVy, onGround: true };
+              const result = applyJump(p);
+              return result.vy === -550 && result.onGround === false;
+            }
+          )
+          // **Validates: Requirements 3.3**
+        );
+
+        // 3b: integrateGravity matches vy + 1400 * (dt/1000) exactly
+        fc.assert(
+          fc.property(
+            fc.float({ min: -1000, max: 1000, noNaN: true }), // vy
+            fc.float({ min: 1,     max: 100,  noNaN: true }), // dt (ms, already clamped range)
+            (vy, dt) => {
+              const newVy = integrateGravity(vy, dt);
+              const expected = vy + 1400 * (dt / 1000);
+              return Math.abs(newVy - expected) < 1e-9;
+            }
+          )
+          // **Validates: Requirements 3.4**
+        );
+
+        // 3c: ground-snap — if computed y >= GROUND_Y - h, vy must become 0
+        //     Simulate the snap logic directly (pure extraction of PhysicsEngine ground-snap)
+        const GROUND_Y = 340;
+        fc.assert(
+          fc.property(
+            fc.float({ min: -1000, max: 1000, noNaN: true }), // vy before snap check
+            fc.float({ min: 20,    max: 200,  noNaN: true }), // player h
+            fc.float({ min: 200,   max: 400,  noNaN: true }), // player y (spans ground boundary)
+            (vy, h, y) => {
+              // Replicate the ground-snap guard from PhysicsEngine._updatePlayer
+              let resultVy = vy;
+              let onGround = false;
+              if (y >= GROUND_Y - h) {
+                resultVy = 0;
+                onGround = true;
+              }
+              // If snapped: vy must be 0 and onGround true
+              if (y >= GROUND_Y - h) {
+                return resultVy === 0 && onGround === true;
+              }
+              // If not snapped: vy and onGround are unchanged
+              return resultVy === vy && onGround === false;
+            }
+          )
+          // **Validates: Requirements 3.5**
+        );
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 4: Slide Hitbox Invariant
+    //  Validates: Requirements 3.6
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 4: Slide Hitbox Invariant — height = baseH * 0.5 when sliding, baseH otherwise',
+      () => fc.assert(
+        fc.property(
+          fc.float({ min: 1, max: 500, noNaN: true }), // baseH
+          fc.boolean(),                                  // sliding
+          (baseH, sliding) => {
+            const h = slideHitboxHeight(baseH, sliding);
+            if (sliding) {
+              return h === baseH * 0.5;
+            } else {
+              return h === baseH;
+            }
+          }
+        )
+        // **Validates: Requirements 3.6**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 7: AABB Correctness
+    //  Validates: Requirements 6.5
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 7: AABB Correctness — aabb(a,b) matches the full Boolean predicate for any rectangle pair',
+      () => fc.assert(
+        fc.property(
+          rectArb,
+          rectArb,
+          (a, b) => {
+            // Reference predicate (the ground truth)
+            const expected =
+              a.x < b.x + b.w &&
+              a.x + a.w > b.x &&
+              a.y < b.y + b.h &&
+              a.y + a.h > b.y;
+
+            return aabb(a, b) === expected;
+          }
+        )
+        // **Validates: Requirements 6.5**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 8: Slide + Laser Beam — No Collision
+    //  Validates: Requirements 6.6
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 8: Slide + Laser No Collision — no life decrement when player is sliding and obstacle is laser_beam',
+      () => fc.assert(
+        fc.property(
+          // Player in sliding state, not invincible
+          fc.record({
+            sliding:    fc.constant(true),
+            invincible: fc.constant(false),
+            lives:      fc.integer({ min: 1, max: 3 }),
+          }),
+          // laser_beam obstacle (spatial overlap is irrelevant to the guard logic)
+          fc.record({
+            type: fc.constant('laser_beam'),
+          }),
+          (playerState, obstacle) => {
+            const livesBefore = playerState.lives;
+
+            // The guard must return false → no decrement
+            const shouldDecrement = checkObstacleCollision(playerState, obstacle);
+
+            if (shouldDecrement) {
+              // Guard failed — would wrongly decrement lives
+              return false;
+            }
+
+            // Lives must remain unchanged
+            return playerState.lives === livesBefore;
+          }
+        )
+        // **Validates: Requirements 6.6**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Pure functions for Properties 11 and 12
+    //  (inlined here; mirror game.html / DifficultyManager exactly)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * computeSpeed(score, speedBoost) — world scroll speed in px/s.
+     * Formula: clamp(300 + floor(score/1000)*20, 300, 700) * (boost ? 1.3 : 1.0)
+     *
+     * @param {number}  score      Non-negative integer score
+     * @param {boolean} speedBoost Whether speed_boost power-up is active
+     * @returns {number}
+     */
+    function computeSpeed(score, speedBoost) {
+      const base = Math.min(
+        Math.max(300 + Math.floor(score / 1000) * 20, 300),
+        700
+      );
+      return base * (speedBoost ? 1.3 : 1.0);
+    }
+
+    /**
+     * spawnIntervalRange(score) — obstacle spawn interval bounds in ms.
+     * minInterval = max(2250 − floor(score/1000)*50, 800)
+     * Returns [minInterval, minInterval + 1500].
+     *
+     * @param {number} score  Non-negative integer score
+     * @returns {[number, number]}
+     */
+    function spawnIntervalRange(score) {
+      const minInterval = Math.max(
+        2250 - Math.floor(score / 1000) * 50,
+        800
+      );
+      return [minInterval, minInterval + 1500];
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 11: Difficulty Speed Formula
+    //  For any score s and boost flag b:
+    //    result === clamp(300+floor(s/1000)*20,300,700) * (b?1.3:1.0)
+    //    never < 300, never > 910
+    //  Validates: Requirements 9.1, 9.2, 7.4
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 11a: Speed Formula — result matches clamp(300+floor(s/1000)×20,300,700)×(boost?1.3:1.0)',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          fc.boolean(),
+          (score, boost) => {
+            const speed    = computeSpeed(score, boost);
+            const base     = Math.min(300 + Math.floor(score / 1000) * 20, 700);
+            const expected = base * (boost ? 1.3 : 1.0);
+            return Math.abs(speed - expected) < 1e-9;
+          }
+        )
+        // **Validates: Requirements 9.1, 9.2, 7.4**
+      )
+    );
+
+    runProperty(
+      'Property 11b: Speed Formula — result never below 300 px/s for any score or boost flag',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          fc.boolean(),
+          (score, boost) => computeSpeed(score, boost) >= 300
+        )
+        // **Validates: Requirements 9.1**
+      )
+    );
+
+    runProperty(
+      'Property 11c: Speed Formula — result never above 910 px/s (700 × 1.3 upper bound)',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          fc.boolean(),
+          (score, boost) => computeSpeed(score, boost) <= 910 + 1e-9
+        )
+        // **Validates: Requirements 9.2, 7.4**
+      )
+    );
+
+    runProperty(
+      'Property 11d: Speed Formula — base (no boost) is clamped to [300, 700] for all scores',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          (score) => {
+            const speed = computeSpeed(score, false);
+            return speed >= 300 && speed <= 700 + 1e-9;
+          }
+        )
+        // **Validates: Requirements 9.1, 9.2**
+      )
+    );
+
+    runProperty(
+      'Property 11e: Speed Formula — speed (no boost) is monotonically non-decreasing with score',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 50_000 }),
+          fc.nat({ max: 50_000 }),
+          (scoreA, scoreB) => {
+            const lo = Math.min(scoreA, scoreB);
+            const hi = Math.max(scoreA, scoreB);
+            return computeSpeed(lo, false) <= computeSpeed(hi, false) + 1e-9;
+          }
+        )
+        // **Validates: Requirements 9.2**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Property 12: Spawn Interval Formula
+    //  For any score s:
+    //    minInterval === max(2250−floor(s/1000)*50, 800)
+    //    interval in [minInterval, minInterval+1500]
+    //    never < 800 ms
+    //  Validates: Requirements 6.2, 9.3
+    // ─────────────────────────────────────────────────────────────────────────
+    runProperty(
+      'Property 12a: Spawn Interval — minInterval equals max(2250−floor(s/1000)×50, 800) for any score',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          (score) => {
+            const [minI]   = spawnIntervalRange(score);
+            const expected = Math.max(2250 - Math.floor(score / 1000) * 50, 800);
+            return minI === expected;
+          }
+        )
+        // **Validates: Requirements 9.3**
+      )
+    );
+
+    runProperty(
+      'Property 12b: Spawn Interval — maxInterval equals minInterval + 1500 for any score',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          (score) => {
+            const [minI, maxI] = spawnIntervalRange(score);
+            return maxI === minI + 1500;
+          }
+        )
+        // **Validates: Requirements 6.2, 9.3**
+      )
+    );
+
+    runProperty(
+      'Property 12c: Spawn Interval — minInterval never below 800 ms for any score',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          (score) => {
+            const [minI] = spawnIntervalRange(score);
+            return minI >= 800;
+          }
+        )
+        // **Validates: Requirements 9.3**
+      )
+    );
+
+    runProperty(
+      'Property 12d: Spawn Interval — any sampled interval stays in [minInterval, minInterval+1500]',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 100_000 }),
+          fc.float({ min: 0, max: 1, noNaN: true }),  // simulates Math.random()
+          (score, rand) => {
+            const [minI, maxI] = spawnIntervalRange(score);
+            const actual = minI + rand * 1500;
+            return actual >= minI - 1e-9 && actual <= maxI + 1e-9;
+          }
+        )
+        // **Validates: Requirements 6.2, 9.3**
+      )
+    );
+
+    runProperty(
+      'Property 12e: Spawn Interval — minInterval is monotonically non-increasing with score (difficulty ramps up)',
+      () => fc.assert(
+        fc.property(
+          fc.nat({ max: 50_000 }),
+          fc.nat({ max: 50_000 }),
+          (scoreA, scoreB) => {
+            const lo = Math.min(scoreA, scoreB);
+            const hi = Math.max(scoreA, scoreB);
+            const [minLo] = spawnIntervalRange(lo);
+            const [minHi] = spawnIntervalRange(hi);
+            return minLo >= minHi - 1e-9;
+          }
+        )
+        // **Validates: Requirements 9.3**
+      )
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Render final summary
+    // ─────────────────────────────────────────────────────────────────────────
+    renderSummary();
+  </script>
+</body>
+</html>

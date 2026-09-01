@@ -1,0 +1,443 @@
+h1 {
+  font-weight: bold;
+  text-align: center;
+  color: #dddcd7;
+  font-size: clamp(24px, 5vw, 50px);
+  font-family: Arial, Helvetica, sans-serif;
+  padding-bottom: 10px;
+  font-variant: small-caps;
+  text-shadow: 5px 5px 5px rgba(0, 0, 0, 0.5);
+  animation-name: slideDown;
+  animation-duration: 3s;
+  animation-delay: 1s;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.Image-Profile {
+  float: left;
+
+  width: 460px;
+
+  margin: 0 30px 0 0;
+
+  transform: translateY(-250px);
+
+  background: transparent;
+
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+
+.Image-Profile.spin {
+  animation: coinFlip 1.5s linear;
+}
+
+@keyframes coinFlip {
+  0% {
+    transform: translateY(-250px) rotateY(0deg);
+  }
+
+  100% {
+    transform: translateY(-250px) rotateY(370deg);
+  }
+}
+
+.Profile {
+  max-width: 1200px;
+  margin: auto;
+  padding: 20px;
+}
+
+.Introduction {
+  margin-top: 40px;
+  margin-bottom: 100px;
+}
+
+body {
+  width: 100%;
+  max-width: none;
+  background-color: #0a245c;
+  margin: 0;
+  line-height: 1.6;
+  background-attachment: fixed;
+  color: #f4f4f4;
+  text-align: center;
+  text-shadow: 5px 5px 5px rgba(0, 0, 0, 0.5);
+  justify-content: center;
+  font-family: Arial, Helvetica, sans-serif;
+  perspective: 1000px;
+  overflow-x: hidden;
+}
+
+section:not(.CV-Section) {
+  margin-bottom: 80px;
+  padding-bottom: 40px;
+  border-bottom: 1px solid rgba(221, 220, 215, 0.15);
+}
+
+p {
+  justify-content: center;
+  line-height: 25px;
+
+  font-size: 21px;
+
+  color: #dddcd7;
+
+  text-transform: capitalize;
+
+  letter-spacing: 1.5px;
+
+  text-shadow: 5px 5px 5px rgba(0, 0, 0, 0.5);
+
+  word-spacing: 5px;
+
+  font-weight: bold;
+
+  padding: 5px;
+
+  margin: 20px auto;
+}
+
+.contact-item {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  text-align: center;
+
+  flex-direction: column;
+}
+
+.contact-item img {
+  width: 200px;
+  height: 200px;
+
+  object-fit: contain;
+  color: #d4d4d4;
+  margin-bottom: 10px;
+}
+
+.CV-Section {
+  margin-top: 50px;
+  text-align: center;
+}
+
+.cv-btn {
+  background: linear-gradient(45deg, #000, #444);
+
+  color: #dddcd7;
+
+  padding: 15px 25px;
+
+  border-radius: 8px;
+
+  cursor: pointer;
+
+  transition:
+    transform 0.2s ease-in-out,
+    background 0.3s ease-in-out;
+
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.skills-container {
+  display: grid;
+
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+
+  gap: 20px;
+}
+
+/* Navbar */
+nav {
+  background-color:#333333;
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+}
+
+nav ul {
+  display: flex;
+  list-style: none;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+nav div img {
+  width: 50px;
+  height: 50px;
+}
+
+nav ul li a {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #dddcd7;
+  font-weight: 600;
+  padding: 8px 0px;
+  transition: all 300ms;
+  border-bottom: 1px solid #636060;
+}
+
+nav ul li a:hover {
+  border-bottom: 1px solid #dddcd7;
+  color: rgb(180, 17, 17);
+}
+
+nav ul li a img {
+  width: 30px;
+  height: 30px;
+  transition: all 300ms;
+}
+
+nav ul li a img:hover {
+  transform: scale(1.2);
+
+  filter: brightness(0) saturate(100%) invert(17%) sepia(91%) saturate(2814%)
+    hue-rotate(351deg) brightness(91%) contrast(92%);
+}
+/* ---- Footer ---- */
+footer {
+  margin-top: 80px;
+  padding: 30px 0;
+  border-top: 1px solid rgba(221, 220, 215, 0.2); /* Garis pembatas tipis */
+  font-family: Arial, Helvetica, sans-serif;
+  background-color: #3f2122af;
+}
+
+.footer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.footer-top,
+.footer-bottom {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+.footer-top h5,
+.footer-bottom h5 {
+  margin: 0;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.footer-top h5:hover,
+.footer-bottom h5:hover {
+  color: rgb(180, 17, 17);
+
+  transform: translateY(-3px);
+}
+
+footer p {
+  font-size: 14px;
+  color: #dddcd7;
+  opacity: 0.8; /* Membuat teks sedikit lebih redup agar elegan */
+  letter-spacing: 1px;
+  text-transform: none; /* Mencegah huruf kapital di setiap kata */
+  margin: 0;
+}
+
+footer img {
+  width: 30px;
+  height: 30px;
+  margin: 0 10px;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Responsive Breakpoint */
+
+/* Ukuran Tablet */
+
+@media (max-width: 768px) {
+  body {
+    margin: 25px;
+  }
+
+  h1 {
+    font-size: clamp(22px, 4vw, 36px);
+  }
+
+  p {
+    font-size: 16px;
+
+    line-height: 1.6;
+
+    border-width: 4px;
+
+    padding: 10px;
+  }
+
+  .contact-item img {
+    width: 90px;
+    height: 90px;
+  }
+
+  .cv-btn {
+    padding: 12px 20px;
+
+    font-size: 14px;
+  }
+
+  nav ul {
+    width: 70%;
+  }
+}
+
+/* Ukuran Mobile */
+
+@media (max-width: 480px) {
+  body {
+    margin: 15px;
+  }
+
+  h1 {
+    font-size: clamp(20px, 6vw, 28px);
+  }
+
+  p {
+    font-size: 14px;
+
+    line-height: 1.7;
+
+    border-width: 2px;
+
+    padding: 8px;
+  }
+
+  .contact-item img {
+    width: 60px;
+    height: 60px;
+  }
+
+  .cv-btn {
+    padding: 10px 18px;
+
+    font-size: 13px;
+  }
+
+  nav {
+    flex-direction: column;
+
+    height: auto;
+
+    padding: 10px;
+  }
+
+  nav ul {
+    width: 100%;
+
+    flex-direction: column;
+
+    gap: 10px;
+
+    align-items: center;
+
+    position: absolute;
+
+    right: 0;
+    top: 0;
+
+    height: 100vh;
+
+    background-color: #111;
+
+    justify-content: space-evenly;
+
+    z-index: -1;
+
+    transform: translateX(100%);
+
+    opacity: 0;
+  }
+
+  nav ul.slide {
+    transform: translateX(0);
+
+    opacity: 1;
+  }
+
+  .skills-container {
+    grid-template-columns: 1fr;
+  }
+
+  .menu-toggle {
+    display: flex;
+  }
+}
+
+/* ---- this efect activate when the user touches on the button ---- */
+
+/* Hover */
+
+.contact-item img:hover {
+  transform: scale(1.2);
+}
+
+/* Hover */
+
+.cv-btn:hover {
+  transform: scale(1.1);
+
+  background: linear-gradient(45deg, #d4c9c9, #5a5959);
+
+  box-shadow: 0 6px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Click */
+
+.cv-btn:active {
+  transform: scale(0.95);
+}
+
+/* Toast Notification */
+
+.toast {
+  position: fixed;
+
+  top: 20px;
+  left: 50%;
+
+  transform: translateX(-50%);
+
+  background-color: #111;
+
+  color: #dddcd7;
+
+  padding: 15px 25px;
+
+  border-radius: 8px;
+
+  opacity: 0;
+
+  transition: opacity 0.3s ease;
+
+  z-index: 999;
+}
+
+/* saat muncul */
+
+.toast.show {
+  opacity: 1;
+}

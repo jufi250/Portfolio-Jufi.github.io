@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Huggy Wuggy Runner</title>
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #0d0d1a;
+      color: #dddcd7;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Canvas scaling ── */
+    #gameCanvas {
+      display: block;
+      max-width: 100%;
+      height: auto;          /* preserves 2:1 ratio via CSS scaling */
+      border: 2px solid #1a1a2e;
+      background: #0d0d1a;
+    }
+
+    /* ── Game wrapper ── */
+    #gameWrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      max-width: 800px;
+    }
+
+    /* ── Portfolio back-link ── */
+    #backLink {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      color: #aaa;
+      text-decoration: none;
+    }
+    #backLink:hover { color: #dddcd7; text-decoration: underline; }
+
+    /* ── On-screen mobile controls ── */
+    #mobileControls {
+      display: none;           /* shown via media query below */
+      gap: 24px;
+      margin-top: 14px;
+    }
+
+    #mobileControls button {
+      width: 90px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: bold;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    #mobileControls button:active {
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    /* ── Show mobile controls only on narrow viewports ── */
+    @media (max-width: 600px) {
+      #mobileControls { display: flex; }
+      body { justify-content: flex-start; padding-top: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="gameWrapper">
+    <canvas id="gameCanvas" width="800" height="400">
+      Your browser does not support the HTML5 canvas element.
+    </canvas>
+
+    <!-- On-screen controls (visible only on mobile via CSS) -->
+    <div id="mobileControls">
+      <button id="btnJump">Jump</button>
+      <button id="btnSlide">Slide</button>
+    </div>
+
+    <a id="backLink" href="index.html">← Back to Portfolio</a>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ─────────────────────────────────────────────
+    //  Global constants
+    // ─────────────────────────────────────────────
+    const CANVAS_W = 800;
+    const CANVAS_H = 400;
+    const GROUND_Y = 340;
+
+    // ─────────────────────────────────────────────
+    //  localStorage helpers
+    // ─────────────────────────────────────────────
+
+    /**
+     * Read the persisted high score from localStorage.
+     * Returns 0 if unavailable (private mode, quota, etc.).
+     */
+    function readHighScore() {
+      try {
+        return parseInt(localStorage.getItem('huggyWuggyHighScore') || '0', 10);
+      } catch (_e) {
+        return 0;
+      }
+    }
+
+    /**
+     * Persist the high score to localStorage.
+     * Silently fails if localStorage is unavailable.
+     * @param {number} score
+     */
+    function writeHighScore(score) {
+      try {
+        localStorage.setItem('huggyWuggyHighScore', String(score));
+      } catch (_e) {
+        /* silent fail — game continues without persistence */
+      }
+    }
+
+    // ─────────────────────────────────────────────
+    //  GameState singleton
+    // ─────────────────────────────────────────────
+    const GameState = {
+      /** @type {'IDLE'|'RUNNING'|'PAUSED'|'GAME_OVER'} */
+      state: 'IDLE',
+
+      score:     0,
+      highScore: 0,          // populated on page load below
+      scrollX:   0,          // total world pixels scrolled this session
+
+      /** @type {Array<{type:string, x:number, y:number, w:number, h:number, speed:number, angle:number}>} */
+      obstacles: [],
+
+      /** @type {Array<{type:string, x:number, y:number, w:number, h:number}>} */
+      powerups: [],
+
+      activeEffects: {
+        speed_boost: null,   // null | { timer: number }  (ms remaining)
+        shield:      null,   // null | { active: true }
+        magnet:      null,   // null | { timer: number }  (ms remaining)
+      },
+
+      // UI message timers (ms remaining)
+      bonusMessageTimer:   0,
+      powerupMessageTimer: 0,
+      powerupMessageText:  '',
+
+      // GAME_OVER red-flash timer (ms remaining, counts down from 500)
+      redFlashTimer: 0,
+    };
+
+    // ─────────────────────────────────────────────
+    //  Bootstrap: read high score on page load
+    // ─────────────────────────────────────────────
+    GameState.highScore = readHighScore();
+
+    // ─────────────────────────────────────────────
+    //  Canvas reference (used by later modules)
+    // ─────────────────────────────────────────────
+    const canvas = document.getElementById('gameCanvas');
+    const ctx    = canvas.getContext('2d');
+
+    // ─────────────────────────────────────────────
+    //  Minimal stub so the page loads without errors
+    //  (remaining modules implemented in later tasks)
+    // ─────────────────────────────────────────────
+    function drawIdleScreen() {
+      ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+      // background
+      ctx.fillStyle = '#0d0d1a';
+      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+      // ground
+      ctx.fillStyle = '#1a0a2e';
+      ctx.fillRect(0, GROUND_Y, CANVAS_W, CANVAS_H - GROUND_Y);
+
+      // title
+      ctx.fillStyle = '#dddcd7';
+      ctx.font = 'bold 36px "Segoe UI", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Huggy Wuggy Runner', CANVAS_W / 2, 140);
+
+      // subtitle
+      ctx.font = '18px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#aaa';
+      ctx.fillText('Press Space or Tap to Start', CANVAS_W / 2, 190);
+
+      // high score
+      ctx.font = '16px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#dddcd7';
+      ctx.fillText('High Score: ' + GameState.highScore, CANVAS_W / 2, 230);
+    }
+
+    // Draw initial idle screen immediately so the canvas isn't blank
+    drawIdleScreen();
+
+    // ─────────────────────────────────────────────
+    //  handlePause stub (implemented fully in task 11.1)
+    // ─────────────────────────────────────────────
+    function handlePause() {
+      // TODO: implement full pause/resume logic in task 11.1
+    }
+
+    // ─────────────────────────────────────────────
+    //  InputHandler
+    //  Registers all input sources once at init.
+    //  Queues actions as boolean flags so PhysicsEngine
+    //  reads consistent input within a single frame.
+    // ─────────────────────────────────────────────
+    const InputHandler = {
+      /** Set to true when a jump has been requested; cleared by flush() after PhysicsEngine consumes it. */
+      jumpQueued: false,
+
+      /** True while a slide key / button is held down. */
+      slideActive: false,
+
+      /**
+       * Scale a touch clientX coordinate back to logical canvas space (0–800).
+       * Required because CSS may scale the canvas element visually.
+       * @param {number} clientX
+       * @returns {number}
+       */
+      _toCanvasX(clientX) {
+        const rect = canvas.getBoundingClientRect();
+        return (clientX - rect.left) * (CANVAS_W / rect.width);
+      },
+
+      /**
+       * Scale a touch clientY coordinate back to logical canvas space (0–400).
+       * @param {number} clientY
+       * @returns {number}
+       */
+      _toCanvasY(clientY) {
+        const rect = canvas.getBoundingClientRect();
+        return (clientY - rect.top) * (CANVAS_H / rect.height);
+      },
+
+      /**
+       * Register all event listeners. Call once on page load.
+       */
+      init() {
+        // ── Keyboard: keydown ──
+        window.addEventListener('keydown', (e) => {
+          if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) {
+            this.jumpQueued = true;
+          }
+          if (['ArrowDown', 'KeyS'].includes(e.code)) {
+            this.slideActive = true;
+          }
+          if (['Escape', 'KeyP'].includes(e.code)) {
+            handlePause();
+          }
+        });
+
+        // ── Keyboard: keyup ──
+        window.addEventListener('keyup', (e) => {
+          if (['ArrowDown', 'KeyS'].includes(e.code)) {
+            this.slideActive = false;
+          }
+        });
+
+        // ── Touch: tap on canvas triggers jump (passive for scroll performance) ──
+        canvas.addEventListener('touchstart', (e) => {
+          // Scale touch coordinates back to logical canvas space
+          const touch = e.touches[0];
+          if (touch) {
+            // Touch coordinates are available via _toCanvasX/_toCanvasY if
+            // future tasks need position-specific touch zones; for now any
+            // tap on the canvas queues a jump.
+            const _cx = this._toCanvasX(touch.clientX); // eslint-disable-line no-unused-vars
+            const _cy = this._toCanvasY(touch.clientY); // eslint-disable-line no-unused-vars
+          }
+          this.jumpQueued = true;
+        }, { passive: true });
+
+        // ── On-screen Jump button (#btnJump) ──
+        const btnJump = document.getElementById('btnJump');
+        if (btnJump) {
+          // touchstart for mobile (passive — no scroll interference)
+          btnJump.addEventListener('touchstart', (e) => {
+            e.stopPropagation(); // prevent canvas touchstart from also firing
+            this.jumpQueued = true;
+          }, { passive: true });
+
+          // click for mouse/desktop testing
+          btnJump.addEventListener('click', () => {
+            this.jumpQueued = true;
+          });
+        }
+
+        // ── On-screen Slide button (#btnSlide) ──
+        const btnSlide = document.getElementById('btnSlide');
+        if (btnSlide) {
+          // Slide is held — active while finger is down, released on touchend/touchcancel
+          btnSlide.addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            this.slideActive = true;
+          }, { passive: true });
+
+          btnSlide.addEventListener('touchend', () => {
+            this.slideActive = false;
+          });
+
+          btnSlide.addEventListener('touchcancel', () => {
+            this.slideActive = false;
+          });
+
+          // Mouse equivalents for desktop testing
+          btnSlide.addEventListener('mousedown', () => {
+            this.slideActive = true;
+          });
+
+          btnSlide.addEventListener('mouseup', () => {
+            this.slideActive = false;
+          });
+
+          btnSlide.addEventListener('mouseleave', () => {
+            this.slideActive = false;
+          });
+        }
+      },
+
+      /**
+       * Consume the jumpQueued flag after PhysicsEngine has processed it.
+       * Called once per frame at the start of the game loop.
+       */
+      flush() {
+        this.jumpQueued = false;
+      },
+    };
+
+    // Initialise InputHandler immediately so controls are live from page load
+    InputHandler.init();
+
+    // ─────────────────────────────────────────────
+    //  Pure helper: delta-time clamping
+    // ─────────────────────────────────────────────
+
+    /**
+     * Clamps delta-time to a maximum of 100 ms to prevent large position
+     * jumps after a tab-switch or focus loss.
+     * @param {number} dt  Raw delta-time in milliseconds
+     * @returns {number}   dt clamped to [0, 100]
+     */
+    function clampDt(dt) {
+      return Math.min(dt, 100);
+    }
+
+    // ─────────────────────────────────────────────
+    //  Pure helper: AABB collision test
+    // ─────────────────────────────────────────────
+
+    /**
+     * Axis-Aligned Bounding Box overlap test.
+     * Returns true if and only if rectangles a and b overlap on both axes.
+     * Each rectangle is described by {x, y, w, h} in canvas-pixel space.
+     *
+     * Predicate: a.x < b.x+b.w && a.x+a.w > b.x &&
+     *            a.y < b.y+b.h && a.y+a.h > b.y
+     *
+     * @param {{x:number,y:number,w:number,h:number}} a
+     * @param {{x:number,y:number,w:number,h:number}} b
+     * @returns {boolean}
+     */
+    function aabb(a, b) {
+      return a.x < b.x + b.w &&
+             a.x + a.w > b.x &&
+             a.y < b.y + b.h &&
+             a.y + a.h > b.y;
+    }
+
+    // ─────────────────────────────────────────────
+    //  Pure helpers: jump, gravity, slide hitbox
+    // ─────────────────────────────────────────────
+
+    /**
+     * Apply jump velocity to a player-like object.
+     * Mutates the object in-place and returns it (for chaining and testing).
+     * No-op if the player is not on the ground.
+     * @param {{vy:number, onGround:boolean}} p
+     * @returns {{vy:number, onGround:boolean}}
+     */
+    function applyJump(p) {
+      if (p.onGround) {
+        p.vy = -550;
+        p.onGround = false;
+      }
+      return p;
+    }
+
+    /**
+     * Integrate gravity for one physics step.
+     * Pure function — does not mutate state.
+     * @param {number} vy   Current vertical velocity in px/s
+     * @param {number} dt   Delta-time in milliseconds
+     * @returns {number}    New vertical velocity after applying GRAVITY * dt/1000
+     */
+    function integrateGravity(vy, dt) {
+      return vy + 1400 * (dt / 1000);
+    }
+
+    /**
+     * Compute the correct hitbox height for a player based on slide state.
+     * Pure function — used by PhysicsEngine and property-based tests.
+     * @param {number}  baseH    The player's full standing height in pixels
+     * @param {boolean} sliding  Whether the player is currently sliding
+     * @returns {number}
+     */
+    function slideHitboxHeight(baseH, sliding) {
+      return sliding ? baseH * 0.5 : baseH;
+    }
+
+    // ─────────────────────────────────────────────
+    //  Player object
+    // ─────────────────────────────────────────────
+    const player = {
+      x:               CANVAS_W * 0.15, // fixed horizontal position (15% from left)
+      y:               GROUND_Y - 72,   // start at ground level
+      w:               48,              // hitbox width (px)
+      h:               72,              // hitbox height (px) — changes during slide
+      baseH:           72,              // standing height constant
+      vy:              0,               // vertical velocity (px/s; negative = upward)
+      onGround:        true,
+      sliding:         false,
+      lives:           3,
+      invincible:      false,
+      invincibleTimer: 0,               // ms remaining for invincibility
+      animFrame:       0,               // 0–3
+      animTimer:       0,               // ms accumulator for animation
+      ANIM_FPS:        10,
+    };
+
+    // ─────────────────────────────────────────────
+    //  PhysicsEngine
+    // ─────────────────────────────────────────────
+    const PhysicsEngine = {
+      GRAVITY:  1400, // px/s²
+      JUMP_VY:  -550, // px/s  (negative = upward)
+      GROUND_Y: 340,  // canvas px — top of the ground rectangle
+
+      /**
+       * Main per-frame update. Converts dt (ms) → s and delegates to sub-methods.
+       * @param {number} dt  Delta-time in milliseconds (already clamped by clampDt)
+       */
+      update(dt) {
+        const s = dt / 1000;
+        this._updatePlayer(s);
+        this._updateMagnet(dt);          // pull power-ups before normal checks (Req 7.1)
+        this._checkObstacleCollisions();
+        this._checkPowerupCollisions();
+        this.updateEffects(dt);
+        // _checkPrototypeOverlap()   — task 7.3
+      },
+
+      /**
+       * Integrate player physics, ground-snap, and slide hitbox for one frame.
+       * Reads InputHandler.jumpQueued and InputHandler.slideActive (guarded so
+       * this method works even before InputHandler is fully wired).
+       * @param {number} s  Delta-time in seconds
+       */
+      _updatePlayer(s) {
+        const jumpQueued  = InputHandler.jumpQueued;
+        const slideActive = InputHandler.slideActive;
+
+        // ── Jump ──────────────────────────────────────────────────────────
+        if (jumpQueued && player.onGround) {
+          player.vy       = this.JUMP_VY; // −550 px/s upward
+          player.onGround = false;
+          // AudioManager.play('jump') — wired in task 10.1
+        }
+
+        // ── Gravity integration ───────────────────────────────────────────
+        player.vy += this.GRAVITY * s;    // vy += 1400 * s
+        player.y  += player.vy * s;
+
+        // ── Ground snap ───────────────────────────────────────────────────
+        if (player.y >= this.GROUND_Y - player.h) {
+          player.y        = this.GROUND_Y - player.h;
+          player.vy       = 0;
+          player.onGround = true;
+        }
+
+        // ── Slide hitbox ──────────────────────────────────────────────────
+        if (slideActive && player.onGround) {
+          player.sliding = true;
+          player.h       = slideHitboxHeight(player.baseH, true);  // baseH * 0.5
+        } else if (!slideActive) {
+          player.sliding = false;
+          player.h       = slideHitboxHeight(player.baseH, false); // baseH
+        }
+
+        // ── Invincibility timer ───────────────────────────────────────────
+        if (player.invincible) {
+          player.invincibleTimer -= s * 1000; // convert s back to ms
+          if (player.invincibleTimer <= 0) {
+            player.invincible      = false;
+            player.invincibleTimer = 0;
+          }
+        }
+      },
+
+      /**
+       * Check player vs. every active obstacle for AABB collision.
+       * Skips entirely when player is invincible.
+       * Skips laser_beam obstacles when player is sliding (Req 6.6).
+       * On hit:
+       *   - If shield is active, consume it instead of losing a life (Req 7.1).
+       *   - Otherwise decrement lives, start 1500 ms invincibility, play 'hit' sound.
+       *   - If lives reach 0, transition to GAME_OVER (Req 3.9, 10.4).
+       */
+      _checkObstacleCollisions() {
+        // Skip all collision checks while player is invincible (Req 3.8, 10.5)
+        if (player.invincible) return;
+
+        for (const obs of GameState.obstacles) {
+          // Laser beam is passable while sliding (Req 6.6)
+          if (obs.type === 'laser_beam' && player.sliding) continue;
+
+          if (aabb(player, obs)) {
+            // Shield absorbs the hit without losing a life (Req 7.1)
+            if (GameState.activeEffects.shield) {
+              GameState.activeEffects.shield = null;
+              // Start invincibility so the same obstacle doesn't double-trigger
+              player.invincible      = true;
+              player.invincibleTimer = 1500;
+              // Play hit sound to give feedback that shield was consumed
+              if (typeof AudioManager !== 'undefined') AudioManager.play('hit');
+              return; // one shield absorb per invincibility window
+            }
+
+            // Decrement life and trigger invincibility (Req 3.8, 10.1)
+            player.lives          -= 1;
+            player.invincible      = true;
+            player.invincibleTimer = 1500;
+
+            // Play hit sound (Req 10.3, 12.3)
+            if (typeof AudioManager !== 'undefined') AudioManager.play('hit');
+
+            // Check for game over (Req 3.9, 10.4)
+            if (player.lives <= 0) {
+              if (typeof transitionTo !== 'undefined') transitionTo('GAME_OVER');
+            }
+
+            // Only one collision resolved per frame (invincibility now active)
+            return;
+          }
+        }
+      },
+
+      /**
+       * Check player vs. every active power-up for AABB collision.
+       * On overlap: activate effect, remove power-up from pool,
+       * set powerupMessageText and powerupMessageTimer = 2000 ms.
+       * Plays 'pickup' sound (Req 12.4).
+       *
+       * Also handles magnet pull: if magnet is active, pull nearby power-ups
+       * toward the player at 300 px/s and collect on overlap (Req 7.1).
+       */
+      _checkPowerupCollisions() {
+        for (let i = GameState.powerups.length - 1; i >= 0; i--) {
+          const pu = GameState.powerups[i];
+          if (aabb(player, pu)) {
+            // Activate the effect (Req 7.3)
+            switch (pu.type) {
+              case 'speed_boost':
+                GameState.activeEffects.speed_boost = { timer: 5000 };
+                GameState.powerupMessageText = 'Speed Boost!';
+                break;
+              case 'shield':
+                GameState.activeEffects.shield = { active: true };
+                GameState.powerupMessageText = 'Shield!';
+                break;
+              case 'magnet':
+                GameState.activeEffects.magnet = { timer: 8000 };
+                GameState.powerupMessageText = 'Magnet!';
+                break;
+              default:
+                GameState.powerupMessageText = pu.type;
+            }
+
+            // Show power-up name for 2 seconds (Req 7.3)
+            GameState.powerupMessageTimer = 2000;
+
+            // Remove the collected power-up from the active set
+            GameState.powerups.splice(i, 1);
+
+            // Play pickup sound (Req 12.4)
+            if (typeof AudioManager !== 'undefined') AudioManager.play('pickup');
+
+            // Only collect one power-up per frame
+            break;
+          }
+        }
+      },
+
+      /**
+       * Pull nearby power-ups toward the player while the magnet effect is active.
+       * Called each frame before the normal cull/collision step (Req 7.1).
+       *
+       * Algorithm per frame:
+       *  1. Early-out if magnet effect is not active.
+       *  2. For each power-up, compute the Euclidean distance from its center to
+       *     the player's center.
+       *  3. If distance <= 150 px, move the power-up toward the player center at
+       *     300 px/s (direction normalised, scaled by 300 * dt/1000).
+       *  4. After moving, if the power-up AABB now overlaps the player, activate
+       *     its effect (same logic as _checkPowerupCollisions), remove it from the
+       *     array, and play the 'pickup' sound.
+       *
+       * @param {number} dt  Delta-time in milliseconds (already clamped)
+       */
+      _updateMagnet(dt) {
+        // 1. Early-out if magnet is not active
+        if (!GameState.activeEffects.magnet) return;
+
+        const s = dt / 1000; // ms → seconds
+
+        // Player center
+        const px = player.x + player.w * 0.5;
+        const py = player.y + player.h * 0.5;
+
+        for (let i = GameState.powerups.length - 1; i >= 0; i--) {
+          const pu = GameState.powerups[i];
+
+          // Power-up center
+          const cx = pu.x + pu.w * 0.5;
+          const cy = pu.y + pu.h * 0.5;
+
+          // 2. Euclidean distance between centers
+          const dx   = px - cx;
+          const dy   = py - cy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          // 3. Only pull power-ups within the 150 px attraction radius
+          if (dist <= 150) {
+            if (dist > 0) {
+              // Normalise direction and move at 300 px/s
+              const speed = 300 * s;
+              const ratio = speed / dist;
+              pu.x += dx * ratio;
+              pu.y += dy * ratio;
+            }
+
+            // 4. Collect on AABB overlap
+            if (aabb(player, pu)) {
+              // Activate effect — mirrors _checkPowerupCollisions exactly
+              switch (pu.type) {
+                case 'speed_boost':
+                  GameState.activeEffects.speed_boost = { timer: 5000 };
+                  GameState.powerupMessageText = 'Speed Boost!';
+                  break;
+                case 'shield':
+                  GameState.activeEffects.shield = { active: true };
+                  GameState.powerupMessageText = 'Shield!';
+                  break;
+                case 'magnet':
+                  // Picking up a second magnet refreshes the timer
+                  GameState.activeEffects.magnet = { timer: 8000 };
+                  GameState.powerupMessageText = 'Magnet!';
+                  break;
+                default:
+                  GameState.powerupMessageText = pu.type;
+              }
+
+              // Show power-up name for 2 seconds
+              GameState.powerupMessageTimer = 2000;
+
+              // Remove from pool
+              GameState.powerups.splice(i, 1);
+
+              // Play pickup sound (Req 12.4)
+              if (typeof AudioManager !== 'undefined') AudioManager.play('pickup');
+            }
+          }
+        }
+      },
+
+      /**
+       * Decrement timed power-up effect counters each frame.
+       * speed_boost and magnet expire when their timer reaches 0 (Req 7.6).
+       * shield is event-driven (consumed on hit) and is not decremented here.
+       * @param {number} dt  Delta-time in milliseconds
+       */
+      updateEffects(dt) {
+        for (const key of ['speed_boost', 'magnet']) {
+          const effect = GameState.activeEffects[key];
+          if (effect) {
+            effect.timer -= dt;
+            if (effect.timer <= 0) {
+              GameState.activeEffects[key] = null; // expires (Req 7.6)
+            }
+          }
+        }
+        // shield is not timer-based — it stays until consumed by _checkObstacleCollisions
+      },
+    };
+
+    // ─────────────────────────────────────────────
+    //  DifficultyManager
+    //  Computes world scroll speed and obstacle spawn
+    //  intervals based on the current score.
+    // ─────────────────────────────────────────────
+    const DifficultyManager = {
+      BASE_SPEED:      300,  // px/s at score = 0
+      MAX_SPEED:       700,  // px/s hard cap (before speed_boost)
+      SPEED_STEP:       20,  // px/s added per 1000 pts
+      BASE_INTERVAL:  2250,  // ms — midpoint of [1500, 3000] design range
+      MIN_INTERVAL:    800,  // ms hard floor
+      INTERVAL_STEP:    50,  // ms subtracted per 1000 pts
+
+      /**
+       * Current world scroll speed in px/s.
+       * Formula: clamp(300 + floor(score/1000)*20, 300, 700) * (speed_boost ? 1.3 : 1.0)
+       * (Req 9.1, 9.2, 7.4)
+       * @returns {number}
+       */
+      currentSpeed() {
+        const tiers = Math.floor(GameState.score / 1000);
+        const base  = Math.min(this.BASE_SPEED + tiers * this.SPEED_STEP, this.MAX_SPEED);
+        return base * (GameState.activeEffects.speed_boost ? 1.3 : 1.0);
+      },
+
+      /**
+       * Draw the next obstacle spawn interval (ms) at random within the
+       * score-adjusted window.
+       * Formula: minInterval = max(2250 - floor(score/1000)*50, 800)
+       *          interval    = minInterval + Math.random() * 1500
+       * (Req 6.2, 9.3)
+       * @returns {number}
+       */
+      nextObstacleInterval() {
+        const [minI, maxI] = spawnIntervalRange(GameState.score);
+        return minI + Math.random() * (maxI - minI);
+      },
+
+      /**
+       * Called each frame while RUNNING to keep the module in sync.
+       * Currently a no-op (speed/interval are recomputed on demand);
+       * reserved for future ramp-up side-effects.
+       * @param {number} _dt
+       */
+      update(_dt) {
+        // intentionally empty — derived values computed in currentSpeed() /
+        // nextObstacleInterval() which read GameState.score live.
+      },
+    };
+
+    // ─────────────────────────────────────────────
+    //  Pure helpers: difficulty formulas (testable)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Pure function: compute world scroll speed for a given score and boost flag.
+     * Used by DifficultyManager and property-based tests.
+     * @param {number}  score
+     * @param {boolean} boostActive
+     * @returns {number}
+     */
+    function computeSpeed(score, boostActive) {
+      const tiers = Math.floor(score / 1000);
+      const base  = Math.min(300 + tiers * 20, 700);
+      return base * (boostActive ? 1.3 : 1.0);
+    }
+
+    /**
+     * Pure function: return [minInterval, maxInterval] for the obstacle spawn
+     * window at a given score.
+     * @param {number} score
+     * @returns {[number, number]}
+     */
+    function spawnIntervalRange(score) {
+      const tiers       = Math.floor(score / 1000);
+      const minInterval = Math.max(2250 - tiers * 50, 800);
+      return [minInterval, minInterval + 1500];
+    }
+
+    // ─────────────────────────────────────────────
+    //  createObstacle — factory function
+    //  Builds a plain obstacle object with the correct
+    //  per-type dimensions and a speed snapshot from
+    //  DifficultyManager.currentSpeed() at spawn time.
+    //  (Req 6.1, 6.3 — obstacles move at their snapshotted speed)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Create an obstacle entity for the given type.
+     * Dimensions (design doc):
+     *   toy_box      — w:40,  h:60, y: GROUND_Y - 60
+     *   laser_beam   — w:120, h:18, y: GROUND_Y - 18
+     *   spinning_gear— w:44,  h:44, y: GROUND_Y - 44
+     *   fallen_chair — w:80,  h:52, y: GROUND_Y - 52
+     *
+     * @param {'toy_box'|'laser_beam'|'spinning_gear'|'fallen_chair'} type
+     * @returns {{type:string, x:number, y:number, w:number, h:number, speed:number, angle:number}}
+     */
+    function createObstacle(type) {
+      const dims = {
+        toy_box:       { w: 40,  h: 60 },
+        laser_beam:    { w: 120, h: 18 },
+        spinning_gear: { w: 44,  h: 44 },
+        fallen_chair:  { w: 80,  h: 52 },
+      };
+
+      const { w, h } = dims[type] || dims.toy_box;
+
+      return {
+        type,
+        x:     CANVAS_W,         // spawn at the right edge (800)
+        y:     GROUND_Y - h,     // sit on the ground
+        w,
+        h,
+        speed: DifficultyManager.currentSpeed(), // snapshot — never changes mid-screen
+        angle: 0,                                // used by spinning_gear animation
+      };
+    }
+
+    // ─────────────────────────────────────────────
+    //  Pure helper: obstacle culling (testable)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Return a new array containing only obstacles that are still on-screen.
+     * An obstacle is culled when its right edge has exited the left edge: x + w <= 0.
+     * (Req 6.4, Property 9)
+     * @param {Array<{x:number,w:number}>} obstacles
+     * @returns {Array<{x:number,w:number}>}
+     */
+    function cullObstacles(obstacles) {
+      return obstacles.filter(o => o.x + o.w > 0);
+    }
+
+    // ─────────────────────────────────────────────
+    //  Spawner
+    //  Manages two independent timers: one for obstacles,
+    //  one for power-ups.  Each frame it advances both
+    //  timers and spawns when the threshold is reached,
+    //  then culls off-screen entities.
+    //  (Req 6.1–6.4, 7.2, 9.4, 9.5)
+    // ─────────────────────────────────────────────
+    const Spawner = {
+      /** Accumulator for obstacle spawn timer (ms). */
+      obstacleTimer: 0,
+
+      /** Accumulator for power-up spawn timer (ms). */
+      powerupTimer: 0,
+
+      /**
+       * Next obstacle spawn threshold (ms).
+       * Initialised to BASE_INTERVAL; refreshed after each spawn by
+       * DifficultyManager.nextObstacleInterval().
+       */
+      nextObstacleInterval: 2250,
+
+      /**
+       * Next power-up spawn threshold (ms).
+       * Random in [6000, 10000]; refreshed after each spawn.
+       * (Req 7.2)
+       */
+      nextPowerupInterval: 8000,
+
+      /**
+       * Main per-frame update.
+       * Advances both timers, triggers spawns when thresholds are reached,
+       * then culls off-screen obstacles and power-ups.
+       * @param {number} dt  Delta-time in milliseconds (already clamped)
+       */
+      update(dt) {
+        // ── Advance timers ──────────────────────────────────────────────
+        this.obstacleTimer += dt;
+        this.powerupTimer  += dt;
+
+        // ── Obstacle spawn ──────────────────────────────────────────────
+        if (this.obstacleTimer >= this.nextObstacleInterval) {
+          this._spawnObstacle();
+          this.obstacleTimer        = 0;
+          this.nextObstacleInterval = DifficultyManager.nextObstacleInterval();
+        }
+
+        // ── Power-up spawn ──────────────────────────────────────────────
+        if (this.powerupTimer >= this.nextPowerupInterval) {
+          this._spawnPowerup();
+          this.powerupTimer        = 0;
+          this.nextPowerupInterval = 6000 + Math.random() * 4000; // [6000, 10000] ms
+        }
+
+        // ── Cull off-screen entities (Req 6.4, Property 9) ──────────────
+        GameState.obstacles = cullObstacles(GameState.obstacles);
+        GameState.powerups  = GameState.powerups.filter(p => p.x + p.w > 0);
+      },
+
+      /**
+       * Spawn one obstacle (or a double group at high score).
+       *
+       * Pool logic (Req 6.1, 9.4):
+       *   score < 5000  → {toy_box, laser_beam, fallen_chair}
+       *   score >= 5000 → {toy_box, laser_beam, spinning_gear, fallen_chair}
+       *
+       * Group spawning (Req 9.5):
+       *   score >= 10000 with 40% probability → spawn a second obstacle 400 px
+       *   behind the first (i.e. follower.x = CANVAS_W + 400).
+       */
+      _spawnObstacle() {
+        const score = GameState.score;
+
+        // Build the type pool for the current score tier
+        const pool = score >= 5000
+          ? ['toy_box', 'laser_beam', 'spinning_gear', 'fallen_chair']
+          : ['toy_box', 'laser_beam', 'fallen_chair'];
+
+        // Pick a random type from the pool
+        const type = pool[Math.floor(Math.random() * pool.length)];
+        GameState.obstacles.push(createObstacle(type));
+
+        // Possibly spawn a second obstacle 400 px behind (Req 9.5)
+        if (score >= 10000 && Math.random() < 0.4) {
+          const followerType     = pool[Math.floor(Math.random() * pool.length)];
+          const follower         = createObstacle(followerType);
+          follower.x            += 400; // 400 px gap between the two
+          GameState.obstacles.push(follower);
+        }
+      },
+
+      /**
+       * Spawn one power-up.
+       * Type is selected uniformly from {speed_boost, shield, magnet} (Req 7.1).
+       * Floats just above the ground at y = GROUND_Y - 80 (design doc PowerUp model).
+       */
+      _spawnPowerup() {
+        const types = ['speed_boost', 'shield', 'magnet'];
+        const type  = types[Math.floor(Math.random() * types.length)];
+
+        GameState.powerups.push({
+          type,
+          x: CANVAS_W,        // spawn at right edge
+          y: GROUND_Y - 80,   // float above ground
+          w: 32,
+          h: 32,
+        });
+      },
+
+      /**
+       * Reset timers and intervals — called on game restart.
+       */
+      reset() {
+        this.obstacleTimer        = 0;
+        this.powerupTimer         = 0;
+        this.nextObstacleInterval = 2250;
+        this.nextPowerupInterval  = 8000;
+      },
+    };
+
+  </script>
+</body>
+</html>
